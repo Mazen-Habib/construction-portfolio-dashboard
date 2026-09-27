@@ -1,0 +1,107 @@
+// =====================================================================
+//  Construction Portfolio Dashboard: DAX measures
+//  Table and column names are generic, matching the queries in /power-query.
+// =====================================================================
+
+
+// ---------- Context / header ----------
+
+// "as of" card in every page header
+Data Date =
+SELECTEDVALUE ( Dim_ReportingMonth[MonthDate] )
+
+// "» Project name" subtitle next to the page title
+Selected Project =
+"» " & SELECTEDVALUE ( Dim_Project[ProjectName], "All projects" )
+
+// Tooltip on the overview map
+Project Count =
+FORMAT ( DISTINCTCOUNT ( Dim_Project[ProjectFile] ), "0" ) & " assets"
+
+
+// ---------- Schedule: discipline progress ----------
+// MIN() is used because the table visual is already at one-row-per-discipline grain,
+// so this returns the single value without summing weights or percentages.
+
+Variance vs Early =
+MIN ( Fact_DisciplineProgress[Actual] ) - MIN ( Fact_DisciplineProgress[EarlyPlan] ) + 0
+
+Variance vs Late =
+MIN ( Fact_DisciplineProgress[Actual] ) - MIN ( Fact_DisciplineProgress[LatePlan] ) + 0
+
+// Visual-level filter (= 1): hides the table for projects that don't report this section
+Has Progress Data =
+IF (
+    SUM ( Fact_DisciplineProgress[Weight] ) + SUM ( Fact_DisciplineProgress[EarlyPlan] ) = 0,
+    0,
+    1
+)
+
+
+// ---------- Schedule: S-curves ----------
+
+Early Cum %    = SUM ( Fact_ProgressSCurve[EarlyCum] )
+Late Cum %     = SUM ( Fact_ProgressSCurve[LateCum] )
+Actual Cum %   = SUM ( Fact_ProgressSCurve[ActualCum] )
+Forecast Cum % = SUM ( Fact_ProgressSCurve[ForecastCum] )
+
+// Alternative when the source only stores monthly increments:
+// running total over the dates visible in the chart
+Actual Cum % (running) =
+CALCULATE (
+    SUM ( Fact_ProgressSCurve[ActualMonthly] ),
+    FILTER (
+        ALLSELECTED ( Fact_ProgressSCurve[Date] ),
+        Fact_ProgressSCurve[Date] <= MAX ( Fact_ProgressSCurve[Date] )
+    )
+)
+
+
+// ---------- Payment milestones ----------
+
+Payment Variance =
+MIN ( Fact_PaymentProgress[Actual] ) - MIN ( Fact_PaymentProgress[Planned] ) + 0
+
+Has Payment Data =
+IF (
+    SUM ( Fact_PaymentProgress[Weight] )
+        + SUM ( Fact_PaymentProgress[Planned] )
+        + SUM ( Fact_PaymentProgress[Actual] ) = 0,
+    0,
+    1
+)
+
+Payment Plan Cum %     = SUM ( Fact_PaymentSCurve[PlanCum] )
+Payment Actual Cum %   = SUM ( Fact_PaymentSCurve[ActualCum] )
+Payment Forecast Cum % = SUM ( Fact_PaymentSCurve[ForecastCum] )
+
+
+// ---------- Cost ----------
+
+Cost Value =
+SUM ( Fact_Budget[Value] ) + 0
+
+
+// ---------- Safety (HSE) ----------
+// One measure feeds all 19 indicator cards; each card carries a visual-level
+// filter on Fact_SafetyIndicators[IndicatorType] (Near Miss, LTI, First Aid Case, ...).
+
+Safety Count =
+CALCULATE (
+    SUM ( Fact_SafetyIndicators[Count] ),
+    YEAR ( Fact_SafetyIndicators[MonthDate] ) >= 2025
+) + 0
+
+
+// ---------- Funding (composite model: DirectQuery to the finance model) ----------
+// Waterfall: each source of funding is a positive step; the "Funding Gap" bar is the
+// negative total, so the waterfall closes at zero when the gap is fully funded.
+
+Funding Waterfall =
+VAR Head = SELECTEDVALUE ( Dim_FundingHead[Label] )
+RETURN
+    IF (
+        Head = "Funding Gap",
+        - CALCULATE ( SUM ( Fact_Funding[Amount] ), REMOVEFILTERS ( Dim_FundingHead ) ),
+        SUM ( Fact_Funding[Amount] )
+    )
